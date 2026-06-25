@@ -1,5 +1,7 @@
 # QuantF
 
+[中文说明](README.zh-CN.md)
+
 QuantF is a lightweight long-term US equity monitoring system for index ETFs and large technology stocks. It is designed for a personal buy-and-hold workflow: keep watching core assets, detect long-term trend/risk changes, track portfolio concentration, and surface alerts that deserve manual review.
 
 This project is for research and personal monitoring only. It is not investment advice.
