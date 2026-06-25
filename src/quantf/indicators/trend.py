@@ -14,12 +14,14 @@ def compute_signals(prices: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     frames: list[pd.DataFrame] = []
+    benchmark_returns = _benchmark_returns(prices)
     for symbol, group in prices.groupby("symbol", sort=True):
         frame = group.sort_values("date").copy()
         price = frame["adj_close"].fillna(frame["close"])
         returns = price.pct_change()
 
         frame["close"] = price
+        frame["ma_20"] = price.rolling(20, min_periods=20).mean()
         frame["ma_50"] = price.rolling(50, min_periods=50).mean()
         frame["ma_200"] = price.rolling(200, min_periods=200).mean()
         frame["return_20d"] = price.pct_change(20)
@@ -29,6 +31,9 @@ def compute_signals(prices: pd.DataFrame) -> pd.DataFrame:
         frame["volatility_60d"] = returns.rolling(60, min_periods=60).std() * (252**0.5)
         frame["drawdown_from_52w_high"] = price / price.rolling(252, min_periods=20).max() - 1
         frame["drawdown_from_all_time_high"] = price / price.cummax() - 1
+        frame = frame.merge(benchmark_returns, on="date", how="left")
+        frame["rs_spy"] = frame["return_60d"] - frame["spy_return_60d"]
+        frame["rs_qqq"] = frame["return_60d"] - frame["qqq_return_60d"]
         frame["trend_state"] = frame.apply(_trend_state, axis=1)
         frame["risk_state"] = frame.apply(_risk_state, axis=1)
         frame["symbol"] = symbol
@@ -40,6 +45,7 @@ def compute_signals(prices: pd.DataFrame) -> pd.DataFrame:
         "symbol",
         "date",
         "close",
+        "ma_20",
         "ma_50",
         "ma_200",
         "return_20d",
@@ -49,6 +55,8 @@ def compute_signals(prices: pd.DataFrame) -> pd.DataFrame:
         "volatility_60d",
         "drawdown_from_52w_high",
         "drawdown_from_all_time_high",
+        "rs_spy",
+        "rs_qqq",
         "trend_state",
         "risk_state",
         "updated_at",
@@ -72,7 +80,45 @@ def save_signals(conn: "duckdb.DuckDBPyConnection", signals: pd.DataFrame) -> in
     conn.execute(
         """
         INSERT INTO signals_daily
-        SELECT *
+        (
+          symbol,
+          date,
+          close,
+          ma_20,
+          ma_50,
+          ma_200,
+          return_20d,
+          return_60d,
+          return_252d,
+          volatility_20d,
+          volatility_60d,
+          drawdown_from_52w_high,
+          drawdown_from_all_time_high,
+          rs_spy,
+          rs_qqq,
+          trend_state,
+          risk_state,
+          updated_at
+        )
+        SELECT
+          symbol,
+          date,
+          close,
+          ma_20,
+          ma_50,
+          ma_200,
+          return_20d,
+          return_60d,
+          return_252d,
+          volatility_20d,
+          volatility_60d,
+          drawdown_from_52w_high,
+          drawdown_from_all_time_high,
+          rs_spy,
+          rs_qqq,
+          trend_state,
+          risk_state,
+          updated_at
         FROM incoming_signals
         """
     )
@@ -124,3 +170,16 @@ def _risk_state(row: pd.Series) -> str:
     if not pd.isna(ma_200) and close < ma_200:
         return "watch"
     return "normal"
+
+
+def _benchmark_returns(prices: pd.DataFrame) -> pd.DataFrame:
+    benchmarks = pd.DataFrame({"date": pd.to_datetime(prices["date"]).dt.date.unique()})
+    for symbol, column in [("SPY", "spy_return_60d"), ("QQQ", "qqq_return_60d")]:
+        frame = prices[prices["symbol"] == symbol].sort_values("date").copy()
+        if frame.empty:
+            benchmarks[column] = pd.NA
+            continue
+        price = frame["adj_close"].fillna(frame["close"])
+        frame[column] = price.pct_change(60)
+        benchmarks = benchmarks.merge(frame[["date", column]], on="date", how="left")
+    return benchmarks

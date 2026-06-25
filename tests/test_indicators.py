@@ -20,3 +20,6 @@ def test_compute_signals_detects_uptrend() -> None:
 
     assert latest["trend_state"] == "uptrend"
     assert latest["risk_state"] == "normal"
+    assert "ma_20" in signals.columns
+    assert "rs_spy" in signals.columns
+    assert "rs_qqq" in signals.columns

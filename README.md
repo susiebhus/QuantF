@@ -13,7 +13,9 @@ The current MVP focuses on:
 - Daily price collection
 - Long-term trend indicators
 - Drawdown and volatility monitoring
-- Rule-based alerts
+- Event-driven alerts
+- Data ingestion health tracking
+- Raw data retention
 - A Streamlit dashboard
 
 The default watchlist tracks:
@@ -28,10 +30,13 @@ QuantF follows a simple data pipeline:
 
 ```text
 configs/watchlist.yaml
-  -> yfinance historical daily prices
+  -> MarketDataProvider
+  -> incremental historical daily prices
+  -> raw_prices
   -> DuckDB local database
+  -> data quality checks
   -> trend/risk indicator calculation
-  -> rule-based alert engine
+  -> event engine
   -> Streamlit dashboard
 ```
 
@@ -44,9 +49,10 @@ The system is intentionally not built as a high-frequency trading bot. The first
 | Data | Source | Code | Notes |
 | --- | --- | --- | --- |
 | Daily OHLCV prices | `yfinance` | `src/quantf/data/prices.py` | Downloads 10 years of daily market data by default |
+| Provider abstraction | `MarketDataProvider` | `src/quantf/data/providers/` | Keeps business logic independent from data vendors |
 | Watchlist symbols | Local YAML | `configs/watchlist.yaml` | Defines ETFs and stocks to monitor |
 | Portfolio positions | Local YAML | `configs/portfolio.example.yaml` | Manual position input for local tracking |
-| Local storage | DuckDB | `src/quantf/db/schema.py` | Stores prices, signals, and alerts |
+| Local storage | DuckDB | `src/quantf/db/schema.py` | Stores prices, raw payloads, signals, events, quality reports, and portfolio stats |
 
 `yfinance` is convenient for research and MVP development. For production or trading use, replace or cross-check it with a more robust data provider such as Alpaca, Polygon, Nasdaq Data Link, or Interactive Brokers.
 
@@ -65,25 +71,39 @@ The `quantf run-daily` command performs the full MVP workflow:
 
 ```text
 1. Read symbols from configs/watchlist.yaml
-2. Call yfinance.download(...)
-3. Normalize prices into symbol/date/open/high/low/close/adj_close/volume
-4. Save rows into data/quantf.duckdb -> daily_prices
-5. Recompute indicators for all stored prices
-6. Save calculated signals into signals_daily
-7. Generate alerts from the latest signal row of each symbol
-8. Save alerts into alerts
+2. Select a MarketDataProvider
+3. Read the last successful price date for each symbol
+4. Fetch only the missing date range
+5. Store provider payloads into raw_prices
+6. Validate and clean data
+7. Save clean rows into daily_prices
+8. Recompute signals into signals_daily
+9. Emit non-duplicated events into events
+10. Update portfolio stats
+11. Write ingestion_runs for recovery/debugging
 ```
 
 The default download settings are:
 
 ```python
+provider.fetch_prices(
+    symbol,
+    start=last_price_date + 1 day,
+    end=today,
+)
+```
+
+The current Yahoo provider uses:
+
+```python
 yf.download(
-    symbols,
-    period="10y",
+    symbol,
+    start=start.isoformat(),
+    end=(end + 1 day).isoformat(),
     auto_adjust=False,
     group_by="ticker",
     progress=False,
-    threads=True,
+    threads=False,
 )
 ```
 
@@ -114,6 +134,8 @@ The MVP computes these indicators in `src/quantf/indicators/trend.py`:
 | `volatility_60d` | Annualized volatility from 60-day daily returns |
 | `drawdown_from_52w_high` | Current price divided by 252-day high minus 1 |
 | `drawdown_from_all_time_high` | Current price divided by historical high minus 1 |
+| `rs_spy` | 60-day return minus SPY 60-day return |
+| `rs_qqq` | 60-day return minus QQQ 60-day return |
 
 ### Trend State
 
@@ -145,20 +167,23 @@ normal:
   no risk rule triggered
 ```
 
-### Alert Rules
+### Event Rules
 
-The MVP alert engine lives in `src/quantf/alerts/rules.py`.
+The v1.1 event engine lives in `src/quantf/events/engine.py`.
 
-It creates alerts when:
+It creates durable events when:
 
-- `trend_state == "downtrend"`: long-term trend is weak
-- `risk_state == "watch"`: asset needs attention
-- `risk_state == "warning"`: drawdown warning
+- `TrendChanged`: trend state changes
+- `RiskEscalated`: risk state moves to a higher severity
+- `New52WeekHigh`: asset reaches a new 52-week high
+- `New52WeekLow`: asset reaches a new 52-week low
+- `PriceCrossMA200`: price crosses the 200-day moving average
+- `PortfolioDrift`: actual weight drifts away from target weight
 
-Alerts are stored in the local `alerts` table with:
+Events are deterministic and non-duplicated. They are stored in the local `events` table with:
 
 ```text
-id, created_at, symbol, alert_type, severity, title, message, resolved
+event_id, event_time, symbol, event_type, severity, title, message, payload, source_date
 ```
 
 ## Output Results
@@ -185,7 +210,12 @@ The local DuckDB file stores:
 | --- | --- |
 | `daily_prices` | Raw normalized daily OHLCV data |
 | `signals_daily` | Calculated indicators and trend/risk states |
-| `alerts` | Open and historical alerts |
+| `raw_prices` | Original provider payloads for debugging/rebuilds |
+| `ingestion_runs` | Fetch status, failures, and recovery metadata |
+| `data_quality_report` | Data validity, spike, and missing-data reports |
+| `events` | Durable event timeline |
+| `portfolio` | Current portfolio config loaded into the database |
+| `portfolio_stats` | Weight, target weight, and drift snapshots |
 
 ### Dashboard Output
 
@@ -199,7 +229,8 @@ Running the Streamlit app shows:
 - 60-day and 252-day returns
 - Portfolio holdings from local config
 - Target allocation drift
-- Open alerts
+- Data health and ingestion runs
+- Event timeline
 
 ## Current Limitations
 
@@ -256,6 +287,7 @@ quantf init-db
 quantf update-prices
 quantf compute-signals
 quantf generate-alerts
+quantf generate-events
 quantf run-daily
 ```
 
@@ -267,14 +299,21 @@ configs/
   portfolio.example.yaml      # Manual portfolio input
   alerts.yaml                 # Alert thresholds for later expansion
 src/quantf/
-  data/prices.py              # yfinance price download and normalization
+  data/providers/             # MarketDataProvider implementations
+  data/pipeline.py            # Incremental ingestion pipeline
+  data/prices.py              # Price persistence helpers
+  data/quality.py             # Data quality checks
+  data/raw.py                 # Raw provider payload storage
   db/schema.py                # DuckDB tables
   indicators/trend.py         # Trend, return, volatility, drawdown indicators
-  alerts/rules.py             # Rule-based alert generation
+  events/engine.py            # Durable event generation
   portfolio/                  # Holdings and target allocation helpers
+  market/regime.py            # Lightweight market regime classification
   app/streamlit_app.py        # Dashboard
   cli.py                      # Command-line workflow
 tests/
   test_indicators.py
   test_alerts.py
+  test_data_quality.py
+  test_events.py
 ```

@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import argparse
 
-from quantf.alerts.rules import generate_asset_alerts, save_alerts
-from quantf.data.prices import download_prices, load_prices, save_prices
+from quantf.data.pipeline import update_market_data
+from quantf.data.prices import load_prices
 from quantf.db.connection import connect
 from quantf.db.schema import ensure_schema
+from quantf.events.engine import (
+    generate_events,
+    load_previous_signals,
+    save_events,
+)
 from quantf.indicators.trend import compute_signals, load_latest_signals, save_signals
+from quantf.portfolio.service import sync_portfolio_from_config, update_portfolio_stats
 
 
 def main() -> None:
@@ -16,6 +22,7 @@ def main() -> None:
     subparsers.add_parser("update-prices")
     subparsers.add_parser("compute-signals")
     subparsers.add_parser("generate-alerts")
+    subparsers.add_parser("generate-events")
     subparsers.add_parser("run-daily")
     args = parser.parse_args()
 
@@ -25,29 +32,40 @@ def main() -> None:
     if args.command == "init-db":
         print("Database schema is ready.")
     elif args.command == "update-prices":
-        prices = download_prices()
-        count = save_prices(conn, prices)
-        print(f"Saved {count} price rows.")
+        result = update_market_data(conn)
+        print(
+            f"Market data update complete: {result.symbols} symbols, "
+            f"{result.prices} prices, {result.quality_reports} quality reports, "
+            f"{result.ingestion_runs} ingestion runs."
+        )
     elif args.command == "compute-signals":
         prices = load_prices(conn)
         signals = compute_signals(prices)
         count = save_signals(conn, signals)
         print(f"Saved {count} signal rows.")
-    elif args.command == "generate-alerts":
+    elif args.command in {"generate-alerts", "generate-events"}:
+        prices = load_prices(conn)
         latest = load_latest_signals(conn)
-        alerts = generate_asset_alerts(latest)
-        count = save_alerts(conn, alerts)
-        print(f"Saved {count} alerts.")
+        previous = load_previous_signals(conn)
+        sync_portfolio_from_config(conn)
+        portfolio_drift = update_portfolio_stats(conn, latest)
+        events = generate_events(latest, previous, prices, portfolio_drift)
+        count = save_events(conn, events)
+        print(f"Saved {count} new events.")
     elif args.command == "run-daily":
-        prices = download_prices()
-        price_count = save_prices(conn, prices)
-        all_prices = load_prices(conn)
-        signals = compute_signals(all_prices)
+        pipeline_result = update_market_data(conn)
+        prices = load_prices(conn)
+        signals = compute_signals(prices)
         signal_count = save_signals(conn, signals)
         latest = load_latest_signals(conn)
-        alerts = generate_asset_alerts(latest)
-        alert_count = save_alerts(conn, alerts)
+        previous = load_previous_signals(conn)
+        portfolio_rows = sync_portfolio_from_config(conn)
+        portfolio_drift = update_portfolio_stats(conn, latest)
+        events = generate_events(latest, previous, prices, portfolio_drift)
+        event_count = save_events(conn, events)
         print(
-            f"Daily run complete: {price_count} prices, "
-            f"{signal_count} signals, {alert_count} alerts."
+            f"Daily run complete: {pipeline_result.prices} prices, "
+            f"{signal_count} signals, {event_count} new events, "
+            f"{pipeline_result.quality_reports} quality reports, "
+            f"{portfolio_rows} portfolio rows."
         )
