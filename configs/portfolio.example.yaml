@@ -1,0 +1,20 @@
+base_currency: USD
+positions:
+  - symbol: SPY
+    shares: 0
+    cost_basis: 0
+  - symbol: QQQ
+    shares: 0
+    cost_basis: 0
+  - symbol: NVDA
+    shares: 0
+    cost_basis: 0
+
+target_allocation:
+  SPY: 35
+  QQQ: 25
+  VTI: 10
+  NVDA: 10
+  AAPL: 7.5
+  AMZN: 7.5
+  MSFT: 5

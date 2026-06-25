@@ -1,0 +1,8 @@
+asset_rules:
+  drawdown_watch: -0.20
+  drawdown_warning: -0.30
+  min_history_for_ma200: 220
+portfolio_rules:
+  single_stock_warning_weight: 0.20
+  tech_total_warning_weight: 0.70
+  rebalance_watch_deviation: 0.05

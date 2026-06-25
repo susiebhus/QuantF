@@ -1,0 +1,15 @@
+symbols:
+  core_etf:
+    - SPY
+    - QQQ
+    - VTI
+  tech_stocks:
+    - NVDA
+    - AAPL
+    - AMZN
+    - MSFT
+  sector_etf:
+    - SMH
+    - XLK
+  cash_like:
+    - SGOV
