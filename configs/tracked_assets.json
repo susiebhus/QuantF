@@ -1,0 +1,36 @@
+{
+  "stocks": [
+    "NVDA",
+    "AAPL",
+    "AMZN",
+    "MSFT"
+  ],
+  "etfs": [
+    "SPY",
+    "QQQ",
+    "VTI",
+    "SMH",
+    "XLK",
+    "SGOV"
+  ],
+  "groups": {
+    "core_etf": [
+      "SPY",
+      "QQQ",
+      "VTI"
+    ],
+    "tech_stocks": [
+      "NVDA",
+      "AAPL",
+      "AMZN",
+      "MSFT"
+    ],
+    "sector_etf": [
+      "SMH",
+      "XLK"
+    ],
+    "cash_like": [
+      "SGOV"
+    ]
+  }
+}
